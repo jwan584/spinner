@@ -202,22 +202,15 @@
       };
     }
 
-    function outwardVertexOffset(v, verts, i) {
-      const prev = verts[(i + 4) % 5];
-      const next = verts[(i + 1) % 5];
-      const e1x = v.x - prev.x;
-      const e1y = v.y - prev.y;
-      const e2x = next.x - v.x;
-      const e2y = next.y - v.y;
-      const n1l = Math.hypot(e1x, e1y) || 1;
-      const n2l = Math.hypot(e2x, e2y) || 1;
-      let nx = e1x / n1l + e2x / n2l;
-      let ny = e1y / n1l + e2y / n2l;
-      const nl = Math.hypot(nx, ny) || 1;
-      nx /= nl;
-      ny /= nl;
-      const half = WALL_THICKNESS * 0.36;
-      return { x: v.x + nx * half, y: v.y + ny * half };
+    function outwardVertexOffset(v) {
+      const dx = v.x - CENTER.x;
+      const dy = v.y - CENTER.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const offset = WALL_THICKNESS * 0.36;
+      return {
+        x: v.x + (dx / len) * offset,
+        y: v.y + (dy / len) * offset
+      };
     }
 
     function removeContainerBodies() {
@@ -248,7 +241,7 @@
       }
 
       for (let i = 0; i < 5; i++) {
-        const pos = outwardVertexOffset(verts[i], verts, i);
+        const pos = outwardVertexOffset(verts[i]);
         const corner = Bodies.circle(
           pos.x, pos.y,
           WALL_THICKNESS * 0.78,
@@ -268,13 +261,15 @@
         const edge = edgeMidpointAndAngle(v1, v2);
         const wall = wallBodies[i];
 
-        Body.setPosition(wall, { x: edge.x, y: edge.y });
-        Body.setAngle(wall, edge.angle);
+        // Derive kinematic velocities from scripted motion so spinning walls
+        // transfer tangential impulses while remaining fixed container pieces.
+        Body.setPosition(wall, { x: edge.x, y: edge.y }, true);
+        Body.setAngle(wall, edge.angle, true);
       }
 
       for (let i = 0; i < 5; i++) {
-        const pos = outwardVertexOffset(verts[i], verts, i);
-        Body.setPosition(cornerBodies[i], pos);
+        const pos = outwardVertexOffset(verts[i]);
+        Body.setPosition(cornerBodies[i], pos, true);
       }
     }
 
