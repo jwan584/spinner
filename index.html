@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pentagon Physics Simulator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(ellipse at center, #1a1a2e 0%, #0f0f1a 70%);
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: #e0e0e0;
+      overflow: hidden;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 300;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 0.75rem;
+      color: #a0c4ff;
+    }
+
+    #canvas-container {
+      position: relative;
+      border-radius: 12px;
+      box-shadow: 0 0 60px rgba(100, 150, 255, 0.15), inset 0 0 30px rgba(0, 0, 0, 0.5);
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      background: #12121f;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: center;
+      justify-content: center;
+      margin-top: 1.25rem;
+      padding: 0 1rem;
+    }
+
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+    }
+
+    label { color: #8899aa; }
+
+    input[type="range"] {
+      width: 120px;
+      accent-color: #6c9eff;
+    }
+
+    button {
+      background: linear-gradient(135deg, #3a5a9a, #2a4070);
+      border: 1px solid #5a7abf;
+      color: #e0e8ff;
+      padding: 0.45rem 1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: background 0.2s, transform 0.1s;
+    }
+
+    button:hover {
+      background: linear-gradient(135deg, #4a6aaa, #3a5080);
+    }
+
+    button:active { transform: scale(0.97); }
+
+    .value { min-width: 2.5rem; color: #a0c4ff; font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <h1>Pentagon Physics Simulator</h1>
+  <div id="canvas-container">
+    <canvas id="canvas"></canvas>
+  </div>
+  <div class="controls">
+    <div class="control-group">
+      <label for="speed">Rotation</label>
+      <input type="range" id="speed" min="0" max="3" step="0.05" value="0.6" />
+      <span class="value" id="speed-val">0.60</span>
+    </div>
+    <div class="control-group">
+      <label for="gravity">Gravity</label>
+      <input type="range" id="gravity" min="0.2" max="2" step="0.1" value="1" />
+      <span class="value" id="gravity-val">1.0</span>
+    </div>
+    <button id="add-ball">Add Ball</button>
+    <button id="reset">Reset</button>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+  <script>
+    const { Engine, Render, Runner, Bodies, Body, Composite, Events, Vector } = Matter;
+
+    const canvas = document.getElementById("canvas");
+    const WIDTH = 800;
+    const HEIGHT = 700;
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+
+    const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
+    const PENTAGON_RADIUS = 280;
+    const WALL_THICKNESS = 14;
+    const BALL_RADIUS = 18;
+    const BALL_COLORS = [
+      "#ff6b6b", "#ffd93d", "#6bcb77", "#4d96ff",
+      "#c77dff", "#ff9f43", "#00d2d3", "#f368e0"
+    ];
+
+    let rotationAngle = 0;
+    let rotationSpeed = 0.6;
+    let gravityScale = 1;
+    let wallBodies = [];
+    let ballBodies = [];
+    let colorIndex = 0;
+    let lastTimestamp = null;
+
+    const engine = Engine.create({
+      gravity: { x: 0, y: 1, scale: 0.001 * gravityScale }
+    });
+
+    const render = Render.create({
+      canvas,
+      engine,
+      options: {
+        width: WIDTH,
+        height: HEIGHT,
+        wireframes: false,
+        background: "#12121f",
+        pixelRatio: window.devicePixelRatio || 1
+      }
+    });
+
+    function pentagonVertices(cx, cy, radius, angle) {
+      const verts = [];
+      for (let i = 0; i < 5; i++) {
+        const a = angle + (i * 2 * Math.PI / 5) - Math.PI / 2;
+        verts.push({ x: cx + radius * Math.cos(a), y: cy + radius * Math.sin(a) });
+      }
+      return verts;
+    }
+
+    function edgeMidpointAndAngle(v1, v2) {
+      const mx = (v1.x + v2.x) / 2;
+      const my = (v1.y + v2.y) / 2;
+      const len = Math.hypot(v2.x - v1.x, v2.y - v1.y);
+      const angle = Math.atan2(v2.y - v1.y, v2.x - v1.x);
+      return { x: mx, y: my, length: len, angle };
+    }
+
+    function createWalls() {
+      wallBodies.forEach(w => Composite.remove(engine.world, w));
+      wallBodies = [];
+
+      const verts = pentagonVertices(CENTER.x, CENTER.y, PENTAGON_RADIUS, rotationAngle);
+
+      for (let i = 0; i < 5; i++) {
+        const v1 = verts[i];
+        const v2 = verts[(i + 1) % 5];
+        const edge = edgeMidpointAndAngle(v1, v2);
+
+        const wall = Bodies.rectangle(edge.x, edge.y, edge.length + WALL_THICKNESS, WALL_THICKNESS, {
+          angle: edge.angle,
+          friction: 0.05,
+          restitution: 0.65,
+          inertia: Infinity,
+          render: {
+            fillStyle: "#3a5a8a",
+            strokeStyle: "#6c9eff",
+            lineWidth: 2
+          }
+        });
+        wallBodies.push(wall);
+        Composite.add(engine.world, wall);
+      }
+    }
+
+    function updateWalls(omega) {
+      const verts = pentagonVertices(CENTER.x, CENTER.y, PENTAGON_RADIUS, rotationAngle);
+
+      for (let i = 0; i < 5; i++) {
+        const v1 = verts[i];
+        const v2 = verts[(i + 1) % 5];
+        const edge = edgeMidpointAndAngle(v1, v2);
+        const wall = wallBodies[i];
+
+        const rx = edge.x - CENTER.x;
+        const ry = edge.y - CENTER.y;
+        const vx = -omega * ry;
+        const vy = omega * rx;
+
+        Body.setPosition(wall, { x: edge.x, y: edge.y });
+        Body.setAngle(wall, edge.angle);
+        Body.setVelocity(wall, { x: vx, y: vy });
+        Body.setAngularVelocity(wall, omega);
+      }
+    }
+
+    function randomBallPosition() {
+      const maxR = PENTAGON_RADIUS - BALL_RADIUS - 30;
+      const r = Math.random() * maxR * 0.6;
+      const a = Math.random() * Math.PI * 2;
+      return {
+        x: CENTER.x + r * Math.cos(a),
+        y: CENTER.y + r * Math.sin(a)
+      };
+    }
+
+    function createBall(x, y) {
+      const color = BALL_COLORS[colorIndex % BALL_COLORS.length];
+      colorIndex++;
+
+      const ball = Bodies.circle(x, y, BALL_RADIUS, {
+        restitution: 0.72,
+        friction: 0.02,
+        frictionAir: 0.001,
+        density: 0.002,
+        render: {
+          fillStyle: color,
+          strokeStyle: "#ffffff33",
+          lineWidth: 2
+        }
+      });
+      ballBodies.push(ball);
+      Composite.add(engine.world, ball);
+      return ball;
+    }
+
+    function spawnInitialBalls() {
+      const positions = [
+        { x: CENTER.x - 60, y: CENTER.y - 80 },
+        { x: CENTER.x + 50, y: CENTER.y - 60 },
+        { x: CENTER.x - 30, y: CENTER.y + 40 },
+        { x: CENTER.x + 70, y: CENTER.y + 50 },
+        { x: CENTER.x, y: CENTER.y - 20 },
+        { x: CENTER.x - 80, y: CENTER.y + 20 },
+        { x: CENTER.x + 20, y: CENTER.y + 80 }
+      ];
+      positions.forEach(p => createBall(p.x, p.y));
+    }
+
+    function clearBalls() {
+      ballBodies.forEach(b => Composite.remove(engine.world, b));
+      ballBodies = [];
+      colorIndex = 0;
+    }
+
+    function reset() {
+      clearBalls();
+      rotationAngle = 0;
+      lastTimestamp = null;
+      spawnInitialBalls();
+      createWalls();
+    }
+
+    // Custom render overlay for pentagon outline glow
+    Events.on(render, "afterRender", () => {
+      const ctx = render.context;
+      const verts = pentagonVertices(CENTER.x, CENTER.y, PENTAGON_RADIUS, rotationAngle);
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(verts[0].x, verts[0].y);
+      for (let i = 1; i < 5; i++) ctx.lineTo(verts[i].x, verts[i].y);
+      ctx.closePath();
+      ctx.strokeStyle = "rgba(108, 158, 255, 0.35)";
+      ctx.lineWidth = 3;
+      ctx.shadowColor = "#6c9eff";
+      ctx.shadowBlur = 12;
+      ctx.stroke();
+      ctx.restore();
+    });
+
+    // Rotate kinematic walls before each step so balls receive realistic impulses
+    Events.on(engine, "beforeUpdate", () => {
+      const now = performance.now();
+      const dt = lastTimestamp ? Math.min((now - lastTimestamp) / 1000, 0.05) : 1 / 60;
+      lastTimestamp = now;
+
+      const omega = rotationSpeed * dt;
+      rotationAngle += omega;
+      updateWalls(omega / dt);
+      engine.gravity.scale = 0.001 * gravityScale;
+    });
+
+    createWalls();
+    spawnInitialBalls();
+
+    Render.run(render);
+    const runner = Runner.create();
+    Runner.run(runner, engine);
+
+    // Controls
+    const speedSlider = document.getElementById("speed");
+    const speedVal = document.getElementById("speed-val");
+    speedSlider.addEventListener("input", () => {
+      rotationSpeed = parseFloat(speedSlider.value);
+      speedVal.textContent = rotationSpeed.toFixed(2);
+    });
+
+    const gravitySlider = document.getElementById("gravity");
+    const gravityVal = document.getElementById("gravity-val");
+    gravitySlider.addEventListener("input", () => {
+      gravityScale = parseFloat(gravitySlider.value);
+      gravityVal.textContent = gravityScale.toFixed(1);
+    });
+
+    document.getElementById("add-ball").addEventListener("click", () => {
+      const pos = randomBallPosition();
+      createBall(pos.x, pos.y);
+    });
+
+    document.getElementById("reset").addEventListener("click", reset);
+  </script>
+</body>
+</html>
