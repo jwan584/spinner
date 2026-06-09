@@ -321,24 +321,40 @@
       createContainer();
     }
 
-    Events.on(render, "afterRender", () => {
-      const ctx = render.context;
-      const verts = pentagonVertices(CENTER.x, CENTER.y, PENTAGON_RADIUS, rotationAngle);
-
-      ctx.save();
-      ctx.beginPath();
+    function drawPentagonPath(ctx, verts) {
       ctx.moveTo(verts[0].x, verts[0].y);
       for (let i = 1; i < 5; i++) ctx.lineTo(verts[i].x, verts[i].y);
       ctx.closePath();
-      ctx.lineJoin = "miter";
-      ctx.lineCap = "butt";
-      ctx.strokeStyle = "#4a7abf";
-      ctx.lineWidth = WALL_THICKNESS;
-      ctx.stroke();
+    }
+
+    Events.on(render, "afterRender", () => {
+      const ctx = render.context;
+      const outer = pentagonVertices(CENTER.x, CENTER.y, PENTAGON_RADIUS, rotationAngle);
+      const inner = pentagonVertices(
+        CENTER.x, CENTER.y, PENTAGON_RADIUS - WALL_THICKNESS, rotationAngle
+      );
+
+      ctx.save();
+      ctx.beginPath();
+      drawPentagonPath(ctx, outer);
+      drawPentagonPath(ctx, inner);
+      ctx.fillStyle = "#4a7abf";
+      ctx.fill("evenodd");
+
+      ctx.beginPath();
+      drawPentagonPath(ctx, outer);
       ctx.strokeStyle = "#8cb4ff";
       ctx.lineWidth = 3;
+      ctx.lineJoin = "round";
       ctx.shadowColor = "#6c9eff";
       ctx.shadowBlur = 14;
+      ctx.stroke();
+
+      ctx.beginPath();
+      drawPentagonPath(ctx, inner);
+      ctx.strokeStyle = "#6c9eff88";
+      ctx.lineWidth = 1.5;
+      ctx.shadowBlur = 0;
       ctx.stroke();
       ctx.restore();
     });
